@@ -3,8 +3,10 @@
 namespace SilverStripe\CMS\Tests\Controllers;
 
 use ReflectionProperty;
+use SilverStripe\Admin\HierarchyTreeHandler;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\CMS\Tests\Controllers\CMSMainTreeApiTest\TestHiddenFromTreePage;
+use SilverStripe\CMS\Tests\Controllers\CMSMainTreeApiTest\TreeNodeDataExtension;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
@@ -44,7 +46,7 @@ class CMSMainTreeApiTest extends FunctionalTest
     {
         $this->logInWithPermission('CMS_ACCESS_CMSMain');
 
-        $nodes = $this->getJson('admin/pages/api/readTreeChildren/0');
+        $nodes = $this->getNodes('admin/pages/tree/children/0');
 
         $this->assertSame($this->idsOf(['home', 'about', 'news', 'contact']), array_column($nodes, 'id'));
         $about = $this->findNode($nodes, 'about');
@@ -62,6 +64,7 @@ class CMSMainTreeApiTest extends FunctionalTest
                 'limited',
                 'listViewUrl',
                 'editUrl',
+                'canView',
                 'canEdit',
                 'canAddChildren',
                 'canDuplicate',
@@ -92,14 +95,14 @@ class CMSMainTreeApiTest extends FunctionalTest
         $this->logInWithPermission('CMS_ACCESS_CMSMain');
         $news = $this->objFromFixture(SiteTree::class, 'news');
 
-        $nodes = $this->getJson('admin/pages/api/readTreeChildren/0');
+        $nodes = $this->getNodes('admin/pages/tree/children/0');
         $newsNode = $this->findNode($nodes, 'news');
         $this->assertTrue($newsNode['limited']);
         $this->assertTrue($newsNode['hasChildren']);
         $this->assertSame('admin/pages?ParentID=' . $news->ID, $newsNode['listViewUrl']);
         $this->assertFalse($this->findNode($nodes, 'about')['limited'], 'Two children is not over a limit of two');
 
-        $this->assertSame([], $this->getJson('admin/pages/api/readTreeChildren/' . $news->ID));
+        $this->assertSame(['nodes' => [], 'limited' => true], $this->getJson('admin/pages/tree/children/' . $news->ID));
     }
 
     public function testStatusFlags(): void
@@ -107,14 +110,14 @@ class CMSMainTreeApiTest extends FunctionalTest
         $this->logInWithPermission('CMS_ACCESS_CMSMain');
         $about = $this->objFromFixture(SiteTree::class, 'about');
 
-        $history = $this->findNode($this->getJson('admin/pages/api/readTreeChildren/' . $about->ID), 'history');
+        $history = $this->findNode($this->getNodes('admin/pages/tree/children/' . $about->ID), 'history');
         $this->assertSame(
             [['key' => 'addedtodraft', 'text' => 'Draft', 'title' => 'Item has not been published yet']],
             $history['statusFlags']
         );
         $this->assertStringContainsString(' status-addedtodraft', $history['classes']);
 
-        $contact = $this->findNode($this->getJson('admin/pages/api/readTreeChildren/0'), 'contact');
+        $contact = $this->findNode($this->getNodes('admin/pages/tree/children/0'), 'contact');
         $this->assertSame(
             [['key' => 'modified', 'text' => 'Modified', 'title' => 'Item has unpublished changes']],
             $contact['statusFlags']
@@ -125,12 +128,13 @@ class CMSMainTreeApiTest extends FunctionalTest
     public function testPageTheMemberCannotViewIsListedAsDisabled(): void
     {
         $team = $this->objFromFixture(SiteTree::class, 'team');
-        $url = 'admin/pages/api/readTreeChildren/' . $team->ID;
+        $url = 'admin/pages/tree/children/' . $team->ID;
 
         $this->logInWithPermission('CMS_ACCESS_CMSMain');
-        $nodes = $this->getJson($url);
+        $nodes = $this->getNodes($url);
         $this->assertSame($this->idsOf(['jane', 'private']), array_column($nodes, 'id'));
         $private = $this->findNode($nodes, 'private');
+        $this->assertFalse($private['canView']);
         $this->assertContains('disabled', explode(' ', $private['classes']));
         $this->assertSame('Private profile', $private['treeTitle']);
         $this->assertSame('(Record type: Page) Private profile', $private['tooltip']);
@@ -139,10 +143,23 @@ class CMSMainTreeApiTest extends FunctionalTest
         $this->assertFalse($private['limited']);
         $this->assertSame([], $private['statusFlags']);
         $this->assertNotContains('disabled', explode(' ', $this->findNode($nodes, 'jane')['classes']));
+        $this->assertTrue($this->findNode($nodes, 'jane')['canView']);
 
         $this->logInWithPermission('ADMIN');
-        $private = $this->findNode($this->getJson($url), 'private');
+        $private = $this->findNode($this->getNodes($url), 'private');
+        $this->assertTrue($private['canView']);
         $this->assertNotContains('disabled', explode(' ', $private['classes']));
+    }
+
+    public function testExtensionSeesThePageFields(): void
+    {
+        HierarchyTreeHandler::add_extension(TreeNodeDataExtension::class);
+        $this->logInWithPermission('CMS_ACCESS_CMSMain');
+
+        $about = $this->findNode($this->getNodes('admin/pages/tree/children/0'), 'about');
+
+        $this->assertSame('(Record type: Page) About us', $about['tooltipSeen']);
+        $this->assertTrue($about['canDuplicateSeen']);
     }
 
     public function testChildrenOfAPageTheMemberCannotViewAreServed(): void
@@ -150,7 +167,7 @@ class CMSMainTreeApiTest extends FunctionalTest
         $this->logInWithPermission('CMS_ACCESS_CMSMain');
         $private = $this->objFromFixture(SiteTree::class, 'private');
 
-        $nodes = $this->getJson('admin/pages/api/readTreeChildren/' . $private->ID);
+        $nodes = $this->getNodes('admin/pages/tree/children/' . $private->ID);
         $this->assertSame($this->idsOf(['publicchild']), array_column($nodes, 'id'));
         $this->assertSame('Public profile', $nodes[0]['treeTitle']);
     }
@@ -161,7 +178,7 @@ class CMSMainTreeApiTest extends FunctionalTest
         $team = $this->objFromFixture(SiteTree::class, 'team');
 
         $this->logInWithPermission('ADMIN');
-        $admin = $this->getJson('admin/pages/api/readTreeChildren/' . $team->ID);
+        $admin = $this->getNodes('admin/pages/tree/children/' . $team->ID);
         foreach (['jane', 'private'] as $name) {
             $this->assertTrue($this->findNode($admin, $name)['canEdit']);
             $this->assertTrue($this->findNode($admin, $name)['canAddChildren']);
@@ -169,18 +186,18 @@ class CMSMainTreeApiTest extends FunctionalTest
         }
 
         $this->logInWithPermission('CMS_ACCESS_CMSMain');
-        $jane = $this->findNode($this->getJson('admin/pages/api/readTreeChildren/' . $team->ID), 'jane');
+        $jane = $this->findNode($this->getNodes('admin/pages/tree/children/' . $team->ID), 'jane');
         $this->assertTrue($jane['canEdit']);
         $this->assertTrue($jane['canAddChildren']);
         $this->assertTrue($jane['canDuplicate']);
 
-        $history = $this->findNode($this->getJson('admin/pages/api/readTreeChildren/' . $about->ID), 'history');
+        $history = $this->findNode($this->getNodes('admin/pages/tree/children/' . $about->ID), 'history');
         $this->assertContains('edit-disabled', explode(' ', $history['classes']));
         $this->assertFalse($history['canEdit']);
         $this->assertFalse($history['canAddChildren']);
         $this->assertFalse($history['canDuplicate']);
 
-        $private = $this->findNode($this->getJson('admin/pages/api/readTreeChildren/' . $team->ID), 'private');
+        $private = $this->findNode($this->getNodes('admin/pages/tree/children/' . $team->ID), 'private');
         $this->assertContains('disabled', explode(' ', $private['classes']));
         $this->assertFalse($private['canEdit']);
         $this->assertFalse($private['canAddChildren']);
@@ -193,7 +210,7 @@ class CMSMainTreeApiTest extends FunctionalTest
         SiteTree::create(['Title' => 'Timeline', 'ParentID' => $history->ID, 'CanEditType' => 'LoggedInUsers'])->write();
         $this->logInWithPermission('CMS_ACCESS_CMSMain');
 
-        $timeline = $this->getJson('admin/pages/api/readTreeChildren/' . $history->ID)[0];
+        $timeline = $this->getNodes('admin/pages/tree/children/' . $history->ID)[0];
         $this->assertTrue($timeline['canEdit']);
         $this->assertFalse($timeline['canDuplicate']);
     }
@@ -203,13 +220,13 @@ class CMSMainTreeApiTest extends FunctionalTest
         $this->logInWithPermission('CMS_ACCESS_CMSMain');
         $config = SiteConfig::current_site_config();
 
-        $about = $this->findNode($this->getJson('admin/pages/api/readTreeChildren/0'), 'about');
+        $about = $this->findNode($this->getNodes('admin/pages/tree/children/0'), 'about');
         $this->assertTrue($about['canEdit']);
         $this->assertTrue($about['canDuplicate']);
 
         $config->CanCreateTopLevelType = 'OnlyTheseUsers';
         $config->write();
-        $about = $this->findNode($this->getJson('admin/pages/api/readTreeChildren/0'), 'about');
+        $about = $this->findNode($this->getNodes('admin/pages/tree/children/0'), 'about');
         $this->assertTrue($about['canEdit']);
         $this->assertFalse($about['canDuplicate']);
     }
@@ -223,7 +240,7 @@ class CMSMainTreeApiTest extends FunctionalTest
         $nodes = [];
         $parentIDs = [0];
         while ($parentIDs) {
-            foreach ($this->getJson('admin/pages/api/readTreeChildren/' . array_shift($parentIDs)) as $node) {
+            foreach ($this->getNodes('admin/pages/tree/children/' . array_shift($parentIDs)) as $node) {
                 $nodes[] = $node;
                 if ($node['hasChildren']) {
                     $parentIDs[] = $node['id'];
@@ -254,7 +271,7 @@ class CMSMainTreeApiTest extends FunctionalTest
         $contact = $this->objFromFixture(SiteTree::class, 'contact');
         TestHiddenFromTreePage::create(['Title' => 'Leaf', 'ParentID' => $contact->ID])->write();
 
-        $leaf = $this->getJson('admin/pages/api/readTreeChildren/' . $contact->ID)[0];
+        $leaf = $this->getNodes('admin/pages/tree/children/' . $contact->ID)[0];
         $this->assertContains('nochildren', explode(' ', $leaf['classes']));
         $this->assertTrue($leaf['canEdit']);
         $this->assertFalse($leaf['canAddChildren']);
@@ -265,7 +282,7 @@ class CMSMainTreeApiTest extends FunctionalTest
         $allWords = [];
         foreach (['CMS_ACCESS_CMSMain', 'ADMIN'] as $permission) {
             $this->logInWithPermission($permission);
-            $nodes = $this->getJson('admin/pages/api/readTreeChildren/0');
+            $nodes = $this->getNodes('admin/pages/tree/children/0');
             $seen = [];
             for ($i = 0; $i < count($nodes); $i++) {
                 $node = $nodes[$i];
@@ -283,7 +300,7 @@ class CMSMainTreeApiTest extends FunctionalTest
                 }
                 $this->assertSame($node['hasChildren'], $node['listViewUrl'] !== null, $node['treeTitle']);
                 if ($node['hasChildren']) {
-                    array_push($nodes, ...$this->getJson('admin/pages/api/readTreeChildren/' . $node['id']));
+                    array_push($nodes, ...$this->getNodes('admin/pages/tree/children/' . $node['id']));
                 }
             }
             $this->assertEqualsCanonicalizing(SiteTree::get()->column('ID'), $seen);
@@ -297,12 +314,12 @@ class CMSMainTreeApiTest extends FunctionalTest
         $contact = $this->objFromFixture(SiteTree::class, 'contact');
         $hidden = TestHiddenFromTreePage::create(['Title' => 'Hidden', 'ParentID' => $contact->ID]);
         $hidden->write();
-        $url = 'admin/pages/api/readTreeChildren/' . $contact->ID;
+        $url = 'admin/pages/tree/children/' . $contact->ID;
 
-        $this->assertSame([$hidden->ID], array_column($this->getJson($url), 'id'));
+        $this->assertSame([$hidden->ID], array_column($this->getNodes($url), 'id'));
 
         Config::modify()->set(SiteTree::class, 'hide_from_cms_tree', [TestHiddenFromTreePage::class]);
-        $this->assertSame([], $this->getJson($url));
+        $this->assertSame([], $this->getNodes($url));
     }
 
     public function testTitleWithSpecialCharactersIsPlainText(): void
@@ -312,9 +329,9 @@ class CMSMainTreeApiTest extends FunctionalTest
         $home = $this->objFromFixture(SiteTree::class, 'home');
         SiteTree::create(['Title' => $title, 'ParentID' => $home->ID])->write();
 
-        $response = $this->ajaxGet('admin/pages/api/readTreeChildren/' . $home->ID);
+        $response = $this->ajaxGet('admin/pages/tree/children/' . $home->ID);
         $this->assertSame('application/json', $response->getHeader('Content-Type'));
-        $nodes = json_decode($response->getBody(), true);
+        $nodes = json_decode($response->getBody(), true)['nodes'];
         $this->assertSame($title, $nodes[0]['treeTitle']);
         $this->assertSame('(Record type: Page) ' . $title, $nodes[0]['tooltip']);
     }
@@ -328,19 +345,19 @@ class CMSMainTreeApiTest extends FunctionalTest
         $liveOnly->deleteFromStage(Versioned::DRAFT);
 
         foreach ([$archived->ID, $liveOnly->ID] as $id) {
-            $this->assertJsonError(404, $this->ajaxGet('admin/pages/api/readTreeChildren/' . $id));
-            $this->assertJsonError(404, $this->ajaxGet('admin/pages/api/readTreePath/' . $id));
+            $this->assertJsonError(404, $this->ajaxGet('admin/pages/tree/children/' . $id));
+            $this->assertJsonError(404, $this->ajaxGet('admin/pages/tree/path/' . $id));
         }
     }
 
     public function testNoAccessToTheSection(): void
     {
         $this->logInWithPermission('CMS_ACCESS_AssetAdmin');
-        $this->assertSame(403, $this->ajaxGet('admin/pages/api/readTreeChildren/0')->getStatusCode());
-        $this->assertSame(403, $this->ajaxGet('admin/pages/api/readTreePath/1')->getStatusCode());
+        $this->assertSame(403, $this->ajaxGet('admin/pages/tree/children/0')->getStatusCode());
+        $this->assertSame(403, $this->ajaxGet('admin/pages/tree/path/1')->getStatusCode());
 
         $this->logOut();
-        $this->assertSame(403, $this->ajaxGet('admin/pages/api/readTreeChildren/0')->getStatusCode());
+        $this->assertSame(403, $this->ajaxGet('admin/pages/tree/children/0')->getStatusCode());
     }
 
     public function testQueryCountDoesNotGrowWithTheNumberOfChildren(): void
@@ -357,10 +374,10 @@ class CMSMainTreeApiTest extends FunctionalTest
         }
         $this->logInWithPermission('CMS_ACCESS_CMSMain');
         // Fills the caches every request shares, so both counts start from the same state
-        $this->getJson('admin/pages/api/readTreeChildren/0');
+        $this->getJson('admin/pages/tree/children/0');
 
-        $threeChildren = $this->countQueries('admin/pages/api/readTreeChildren/' . $news->ID);
-        $fiftyChildren = $this->countQueries('admin/pages/api/readTreeChildren/' . $contact->ID);
+        $threeChildren = $this->countQueries('admin/pages/tree/children/' . $news->ID);
+        $fiftyChildren = $this->countQueries('admin/pages/tree/children/' . $contact->ID);
         $this->assertGreaterThan(0, $threeChildren);
         $this->assertSame($threeChildren, $fiftyChildren);
     }
@@ -396,6 +413,13 @@ class CMSMainTreeApiTest extends FunctionalTest
         $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
         $this->assertSame('application/json', $response->getHeader('Content-Type'));
         return json_decode($response->getBody(), true);
+    }
+
+    private function getNodes(string $url): array
+    {
+        $body = $this->getJson($url);
+        $this->assertSame(['nodes'], array_keys($body));
+        return $body['nodes'];
     }
 
     private function assertJsonError(int $code, HTTPResponse $response): void

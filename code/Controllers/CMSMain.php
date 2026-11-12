@@ -6,7 +6,6 @@ use LogicException;
 use Psr\SimpleCache\CacheInterface;
 use SilverStripe\Admin\AdminRootController;
 use SilverStripe\Admin\CMSBatchActionHandler;
-use SilverStripe\Admin\HierarchyTreeController;
 use SilverStripe\Admin\LeftAndMain;
 use SilverStripe\Admin\LeftAndMainFormRequestHandler;
 use SilverStripe\Admin\Navigator\SilverStripeNavigator;
@@ -77,7 +76,7 @@ use SilverStripe\View\ThemeResourceLoader;
  * This class creates a 2-frame layout - left-tree and right-form - to sit beneath the main
  * admin menu.
  */
-class CMSMain extends HierarchyTreeController implements CurrentRecordIdentifier, PermissionProvider, Flushable, MemberCacheFlusher
+class CMSMain extends LeftAndMain implements CurrentRecordIdentifier, PermissionProvider, Flushable, MemberCacheFlusher
 {
     /**
      * Unique ID for page icons CSS block
@@ -140,6 +139,7 @@ class CMSMain extends HierarchyTreeController implements CurrentRecordIdentifier
         'listview',
         'ListViewForm',
         'childfilter',
+        'tree',
     ];
 
     private static array $url_handlers = [
@@ -601,10 +601,37 @@ class CMSMain extends HierarchyTreeController implements CurrentRecordIdentifier
                 'listViewLink' => $this->LinkListViewChildren($node->ID),
                 'rootTitle' => $this->getCMSTreeTitle(),
                 'extraClass' => $this->getTreeNodeClasses($node),
-                'Title' => $this->getTreeNodeTooltip($node),
+                'Title' => _t(
+                    CMSMain::class . '.RECORD_TYPE_TITLE',
+                    '(Record type: {type}) {title}',
+                    [
+                        'type' => $node->i18n_singular_name(),
+                        'title' => $node->Title,
+                    ]
+                ),
                 'TreeTitle' => DBHTMLText::create()->setValue($this->getRecordTreeMarkup($node)),
             ];
         };
+    }
+
+    /**
+     * Get extra CSS classes for a record's tree node
+     */
+    public function getTreeNodeClasses(DataObject $node): string
+    {
+        // Get classes from object
+        $classes = $node->CMSTreeClasses();
+
+        // Get status flag classes
+        $flags = $node->getStatusFlags();
+        if ($flags) {
+            $statuses = array_keys($flags ?? []);
+            foreach ($statuses as $s) {
+                $classes .= ' status-' . $s;
+            }
+        }
+
+        return trim($classes ?? '');
     }
 
     /**
@@ -693,48 +720,6 @@ class CMSMain extends HierarchyTreeController implements CurrentRecordIdentifier
             ->getResponse()
             ->addHeader('Content-Type', 'application/json')
             ->setBody(json_encode($data));
-    }
-
-    // The page tree lists pages the member cannot view as disabled rows, as the legacy tree does
-    protected function canListTreeNode(DataObject $node): bool
-    {
-        return true;
-    }
-
-    protected function getTreeNodeData(DataObject $node, DataObject $parent): array
-    {
-        $data = parent::getTreeNodeData($node, $parent);
-        $data['tooltip'] = $this->getTreeNodeTooltip($node);
-        $data['iconClasses'] = implode(' ', array_filter($this->getTreeIconClasses($node)));
-        $data['listViewUrl'] = $data['hasChildren'] ? $this->LinkListViewChildren($node->ID) : null;
-        $data['editUrl'] = $this->LinkRecordEdit($node->ID);
-        // The same check as in duplicate() and duplicatewithchildren()
-        $data['canDuplicate'] = (bool) $node->canCreate(null, ['Parent' => $parent]);
-        return $data;
-    }
-
-    private function getTreeNodeTooltip(DataObject $node): string
-    {
-        return _t(
-            CMSMain::class . '.RECORD_TYPE_TITLE',
-            '(Record type: {type}) {title}',
-            [
-                'type' => $node->i18n_singular_name(),
-                'title' => $node->Title,
-            ]
-        );
-    }
-
-    private function getTreeIconClasses(DataObject $record): array
-    {
-        $iconClasses = [
-            'jstree-recordicon',
-            'record-icon',
-            $this->getRecordIconCssClass($record),
-            'class-' . Convert::raw2htmlid(get_class($record)),
-        ];
-        $record->invokeWithExtensions('updateTreeIconClasses', $iconClasses);
-        return $iconClasses;
     }
 
     /**
@@ -1216,7 +1201,13 @@ class CMSMain extends HierarchyTreeController implements CurrentRecordIdentifier
         /** @var DataObject&Hierarchy $record */
         $children = $this->getCreatableSubClasses($record);
         $flags = $record->getStatusFlags();
-        $iconClasses = $this->getTreeIconClasses($record);
+        $iconClasses = [
+            'jstree-recordicon',
+            'record-icon',
+            $this->getRecordIconCssClass($record),
+            'class-' . Convert::raw2htmlid(get_class($record)),
+        ];
+        $record->invokeWithExtensions('updateTreeIconClasses', $iconClasses);
         $titleText = $record->getTreeTitle();
         // Hierarchy::getTreeTitle() will call Convert::raw2xml(), though this may have been
         // overridden by another method that doesn't call this
@@ -2135,6 +2126,11 @@ class CMSMain extends HierarchyTreeController implements CurrentRecordIdentifier
     public function batchactions()
     {
         return new CMSBatchActionHandler($this, 'batchactions');
+    }
+
+    public function tree(): CMSMainTreeHandler
+    {
+        return CMSMainTreeHandler::create($this, 'tree', $this->getModelClass());
     }
 
     /**
