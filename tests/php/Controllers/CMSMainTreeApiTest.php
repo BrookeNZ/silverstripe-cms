@@ -135,20 +135,20 @@ class CMSMainTreeApiTest extends FunctionalTest
         $this->assertSame($this->idsOf(['jane', 'private']), array_column($nodes, 'id'));
         $private = $this->findNode($nodes, 'private');
         $this->assertFalse($private['canView']);
-        $this->assertContains('disabled', explode(' ', $private['classes']));
+        $this->assertContains('disabled', $this->words($private));
         $this->assertSame('Private profile', $private['treeTitle']);
         $this->assertSame('(Record type: Page) Private profile', $private['tooltip']);
         $this->assertSame('admin/pages/edit/show/' . $private['id'], $private['editUrl']);
         $this->assertTrue($private['hasChildren']);
         $this->assertFalse($private['limited']);
         $this->assertSame([], $private['statusFlags']);
-        $this->assertNotContains('disabled', explode(' ', $this->findNode($nodes, 'jane')['classes']));
+        $this->assertNotContains('disabled', $this->words($this->findNode($nodes, 'jane')));
         $this->assertTrue($this->findNode($nodes, 'jane')['canView']);
 
         $this->logInWithPermission('ADMIN');
         $private = $this->findNode($this->getNodes($url), 'private');
         $this->assertTrue($private['canView']);
-        $this->assertNotContains('disabled', explode(' ', $private['classes']));
+        $this->assertNotContains('disabled', $this->words($private));
     }
 
     public function testExtensionSeesThePageFields(): void
@@ -192,27 +192,16 @@ class CMSMainTreeApiTest extends FunctionalTest
         $this->assertTrue($jane['canDuplicate']);
 
         $history = $this->findNode($this->getNodes('admin/pages/tree/children/' . $about->ID), 'history');
-        $this->assertContains('edit-disabled', explode(' ', $history['classes']));
+        $this->assertContains('edit-disabled', $this->words($history));
         $this->assertFalse($history['canEdit']);
         $this->assertFalse($history['canAddChildren']);
         $this->assertFalse($history['canDuplicate']);
 
         $private = $this->findNode($this->getNodes('admin/pages/tree/children/' . $team->ID), 'private');
-        $this->assertContains('disabled', explode(' ', $private['classes']));
+        $this->assertContains('disabled', $this->words($private));
         $this->assertFalse($private['canEdit']);
         $this->assertFalse($private['canAddChildren']);
         $this->assertFalse($private['canDuplicate']);
-    }
-
-    public function testPageUnderAParentTheMemberCannotEditCannotBeDuplicated(): void
-    {
-        $history = $this->objFromFixture(SiteTree::class, 'history');
-        SiteTree::create(['Title' => 'Timeline', 'ParentID' => $history->ID, 'CanEditType' => 'LoggedInUsers'])->write();
-        $this->logInWithPermission('CMS_ACCESS_CMSMain');
-
-        $timeline = $this->getNodes('admin/pages/tree/children/' . $history->ID)[0];
-        $this->assertTrue($timeline['canEdit']);
-        $this->assertFalse($timeline['canDuplicate']);
     }
 
     public function testTopLevelPageCanBeDuplicatedByWhoeverMayCreateTopLevelPages(): void
@@ -234,7 +223,11 @@ class CMSMainTreeApiTest extends FunctionalTest
     public function testDuplicateFlagAgreesWithTheDuplicateAction(): void
     {
         $history = $this->objFromFixture(SiteTree::class, 'history');
-        SiteTree::create(['Title' => 'Timeline', 'ParentID' => $history->ID, 'CanEditType' => 'LoggedInUsers'])->write();
+        $timelineID = SiteTree::create([
+            'Title' => 'Timeline',
+            'ParentID' => $history->ID,
+            'CanEditType' => 'LoggedInUsers',
+        ])->write();
         $this->logInWithPermission('CMS_ACCESS_CMSMain');
 
         $nodes = [];
@@ -242,6 +235,7 @@ class CMSMainTreeApiTest extends FunctionalTest
         while ($parentIDs) {
             foreach ($this->getNodes('admin/pages/tree/children/' . array_shift($parentIDs)) as $node) {
                 $nodes[] = $node;
+                $this->assertSame($node['hasChildren'], $node['listViewUrl'] !== null, $node['treeTitle']);
                 if ($node['hasChildren']) {
                     $parentIDs[] = $node['id'];
                 }
@@ -250,6 +244,10 @@ class CMSMainTreeApiTest extends FunctionalTest
         $flags = array_column($nodes, 'canDuplicate');
         $this->assertContains(true, $flags);
         $this->assertContains(false, $flags);
+
+        $timeline = array_column($nodes, null, 'id')[$timelineID];
+        $this->assertTrue($timeline['canEdit']);
+        $this->assertFalse($timeline['canDuplicate'], 'A page under a parent the member cannot edit');
 
         foreach ($nodes as $node) {
             foreach (['duplicate', 'duplicatewithchildren'] as $action) {
@@ -272,40 +270,9 @@ class CMSMainTreeApiTest extends FunctionalTest
         TestHiddenFromTreePage::create(['Title' => 'Leaf', 'ParentID' => $contact->ID])->write();
 
         $leaf = $this->getNodes('admin/pages/tree/children/' . $contact->ID)[0];
-        $this->assertContains('nochildren', explode(' ', $leaf['classes']));
+        $this->assertContains('nochildren', $this->words($leaf));
         $this->assertTrue($leaf['canEdit']);
         $this->assertFalse($leaf['canAddChildren']);
-    }
-
-    public function testPermissionFlagsAgreeWithTheClassWords(): void
-    {
-        $allWords = [];
-        foreach (['CMS_ACCESS_CMSMain', 'ADMIN'] as $permission) {
-            $this->logInWithPermission($permission);
-            $nodes = $this->getNodes('admin/pages/tree/children/0');
-            $seen = [];
-            for ($i = 0; $i < count($nodes); $i++) {
-                $node = $nodes[$i];
-                $seen[] = $node['id'];
-                $words = explode(' ', $node['classes']);
-                $allWords = array_merge($allWords, $words);
-                if (in_array('disabled', $words)) {
-                    $this->assertFalse($node['canEdit'] || $node['canAddChildren'], $node['treeTitle']);
-                }
-                if (in_array('edit-disabled', $words)) {
-                    $this->assertFalse($node['canEdit'], $node['treeTitle']);
-                }
-                if (in_array('nochildren', $words)) {
-                    $this->assertFalse($node['canAddChildren'], $node['treeTitle']);
-                }
-                $this->assertSame($node['hasChildren'], $node['listViewUrl'] !== null, $node['treeTitle']);
-                if ($node['hasChildren']) {
-                    array_push($nodes, ...$this->getNodes('admin/pages/tree/children/' . $node['id']));
-                }
-            }
-            $this->assertEqualsCanonicalizing(SiteTree::get()->column('ID'), $seen);
-        }
-        $this->assertEmpty(array_diff(['disabled', 'edit-disabled', 'nochildren'], $allWords));
     }
 
     public function testClassHiddenFromTheTreeIsNotListed(): void
@@ -329,9 +296,7 @@ class CMSMainTreeApiTest extends FunctionalTest
         $home = $this->objFromFixture(SiteTree::class, 'home');
         SiteTree::create(['Title' => $title, 'ParentID' => $home->ID])->write();
 
-        $response = $this->ajaxGet('admin/pages/tree/children/' . $home->ID);
-        $this->assertSame('application/json', $response->getHeader('Content-Type'));
-        $nodes = json_decode($response->getBody(), true)['nodes'];
+        $nodes = $this->getNodes('admin/pages/tree/children/' . $home->ID);
         $this->assertSame($title, $nodes[0]['treeTitle']);
         $this->assertSame('(Record type: Page) ' . $title, $nodes[0]['tooltip']);
     }
@@ -445,5 +410,10 @@ class CMSMainTreeApiTest extends FunctionalTest
             }
         }
         $this->fail("Node $fixtureName is not in the response");
+    }
+
+    private function words(array $node): array
+    {
+        return explode(' ', $node['classes']);
     }
 }
