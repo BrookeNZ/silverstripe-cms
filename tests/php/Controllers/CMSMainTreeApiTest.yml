@@ -1,0 +1,56 @@
+SilverStripe\Security\Group:
+  privategroup:
+    Title: Private group
+SilverStripe\CMS\Model\SiteTree:
+  home:
+    Title: Home
+    Sort: 1
+  about:
+    Title: About us
+    Sort: 2
+  team:
+    Title: Our team
+    Parent: =>SilverStripe\CMS\Model\SiteTree.about
+    Sort: 1
+  jane:
+    Title: Jane Doe
+    Parent: =>SilverStripe\CMS\Model\SiteTree.team
+    Sort: 1
+  private:
+    Title: Private profile
+    Parent: =>SilverStripe\CMS\Model\SiteTree.team
+    Sort: 2
+    CanViewType: OnlyTheseUsers
+    ViewerGroups: =>SilverStripe\Security\Group.privategroup
+    CanEditType: OnlyTheseUsers
+    EditorGroups: =>SilverStripe\Security\Group.privategroup
+  publicchild:
+    Title: Public profile
+    Parent: =>SilverStripe\CMS\Model\SiteTree.private
+    Sort: 1
+    CanViewType: Anyone
+  history:
+    Title: History
+    Parent: =>SilverStripe\CMS\Model\SiteTree.about
+    Sort: 2
+    CanEditType: OnlyTheseUsers
+    EditorGroups: =>SilverStripe\Security\Group.privategroup
+  news:
+    Title: News
+    Sort: 3
+  news1:
+    Title: News 1
+    Parent: =>SilverStripe\CMS\Model\SiteTree.news
+    Sort: 3
+  news2:
+    Title: News 2
+    Parent: =>SilverStripe\CMS\Model\SiteTree.news
+    Sort: 1
+  news3:
+    Title: News 3
+    Parent: =>SilverStripe\CMS\Model\SiteTree.news
+    Sort: 2
+  contact:
+    Title: Contact us
+    MenuTitle: Contact
+    Sort: 4

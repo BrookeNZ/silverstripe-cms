@@ -139,6 +139,7 @@ class CMSMain extends LeftAndMain implements CurrentRecordIdentifier, Permission
         'listview',
         'ListViewForm',
         'childfilter',
+        'tree',
     ];
 
     private static array $url_handlers = [
@@ -2125,6 +2126,11 @@ class CMSMain extends LeftAndMain implements CurrentRecordIdentifier, Permission
     public function batchactions()
     {
         return new CMSBatchActionHandler($this, 'batchactions');
+    }
+
+    public function tree(): CMSMainTreeHandler
+    {
+        return CMSMainTreeHandler::create($this, 'tree', $this->getModelClass());
     }
 
     /**
