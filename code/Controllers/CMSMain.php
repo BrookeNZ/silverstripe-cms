@@ -134,6 +134,8 @@ class CMSMain extends LeftAndMain implements CurrentRecordIdentifier, Permission
         'savetreenode',
         'getsubtree',
         'updatetreenodes',
+        'apiReadTreeChildren',
+        'apiReadTreePath',
         'batchactions',
         'treeview',
         'listview',
@@ -145,6 +147,8 @@ class CMSMain extends LeftAndMain implements CurrentRecordIdentifier, Permission
         'EditForm/$ID' => 'EditForm',
         'GET SearchForm' => 'getSearchForm',
         'treeview/$ID' => 'treeview',
+        'GET api/readTreeChildren/$ParentID' => 'apiReadTreeChildren',
+        'GET api/readTreePath/$ID' => 'apiReadTreePath',
     ];
 
     private static array $casting = [
@@ -554,17 +558,7 @@ class CMSMain extends LeftAndMain implements CurrentRecordIdentifier, Permission
             $markingSet->markToExpose($currentRecord);
         }
 
-        // Pre-cache permissions if using a permission checker
-        $modelClass = $this->getModelClass();
-        if (is_a($modelClass, PermissionCheckable::class, true)) {
-            $checker = DataObject::singleton($modelClass)->getPermissionChecker();
-            if ($checker instanceof InheritedPermissions) {
-                $checker->prePopulatePermissionCache(
-                    InheritedPermissions::EDIT,
-                    $markingSet->markedNodeIDs()
-                );
-            }
-        }
+        $this->prepopulateTreeEditPermissions($markingSet->markedNodeIDs());
 
         // Render using full-subtree template
         return $markingSet->renderChildren(
@@ -600,14 +594,7 @@ class CMSMain extends LeftAndMain implements CurrentRecordIdentifier, Permission
                 'listViewLink' => $this->LinkListViewChildren($node->ID),
                 'rootTitle' => $this->getCMSTreeTitle(),
                 'extraClass' => $this->getTreeNodeClasses($node),
-                'Title' => _t(
-                    CMSMain::class . '.RECORD_TYPE_TITLE',
-                    '(Record type: {type}) {title}',
-                    [
-                        'type' => $node->i18n_singular_name(),
-                        'title' => $node->Title,
-                    ]
-                ),
+                'Title' => $this->getTreeNodeTooltip($node),
                 'TreeTitle' => DBHTMLText::create()->setValue($this->getRecordTreeMarkup($node)),
             ];
         };
@@ -719,6 +706,201 @@ class CMSMain extends LeftAndMain implements CurrentRecordIdentifier, Permission
             ->getResponse()
             ->addHeader('Content-Type', 'application/json')
             ->setBody(json_encode($data));
+    }
+
+    /**
+     * JSON endpoint to get the tree nodes for the children of one record, or of the top level when the ID is 0.
+     * A record with more children than node_threshold_leaf is marked as limited and its children are not sent.
+     */
+    public function apiReadTreeChildren(HTTPRequest $request): HTTPResponse
+    {
+        // The default action route reaches this method with any verb
+        if (!$request->isGET()) {
+            $this->httpError(405);
+        }
+        $parentID = $this->getTreeRequestID($request, 'ParentID');
+        if ($parentID === null) {
+            $this->jsonError(400);
+        }
+        $parent = $parentID ? $this->getTreeRecord($parentID) : DataObject::singleton($this->getModelClass());
+        if ($this->isTreeNodeLimited($parent)) {
+            return $this->jsonSuccess(200, []);
+        }
+
+        /** @var DataObject&Hierarchy $parent */
+        $childrenMethod = $parent->getHierarchyBaseClass()::config()->get('tree_children_method');
+        $children = $parent->$childrenMethod();
+        // Hierarchy::showingCMSTree() does not list this action, so hidden classes are excluded here
+        $hiddenClasses = $parent->config()->get('hide_from_cms_tree');
+        if ($hiddenClasses) {
+            $children = $children->exclude('ClassName', $hiddenClasses);
+        }
+
+        $this->prepopulateTreeData($children->column('ID'));
+        // The duplicate actions give a top-level record a new record as its parent
+        $duplicateParent = $parentID ? $parent : $this->getModelClass()::create();
+        $nodes = [];
+        foreach ($children as $child) {
+            $nodes[] = $this->getTreeNodeData($child, $duplicateParent);
+        }
+        return $this->jsonSuccess(200, $nodes);
+    }
+
+    /**
+     * JSON endpoint to get the IDs of a record's ancestors, top level first
+     */
+    public function apiReadTreePath(HTTPRequest $request): HTTPResponse
+    {
+        // The default action route reaches this method with any verb
+        if (!$request->isGET()) {
+            $this->httpError(405);
+        }
+        $id = $this->getTreeRequestID($request, 'ID');
+        if (!$id) {
+            $this->jsonError(400);
+        }
+        /** @var DataObject&Hierarchy $record */
+        $record = $this->getTreeRecord($id);
+        if (!$record->canView()) {
+            $this->jsonError(403);
+        }
+        $ancestorIDs = array_map('intval', $record->getAncestors()->column('ID'));
+        return $this->jsonSuccess(200, array_reverse($ancestorIDs));
+    }
+
+    private function getTreeRequestID(HTTPRequest $request, string $name): ?int
+    {
+        $value = $request->param($name);
+        if (!is_string($value) || !ctype_digit($value)) {
+            return null;
+        }
+        return (int) $value;
+    }
+
+    /**
+     * Get a record in the current stage, or end the request with a 404 JSON error
+     */
+    private function getTreeRecord(int $id): DataObject
+    {
+        $record = DataObject::get($this->getModelClass())->byID($id);
+        if (!$record) {
+            $this->jsonError(404);
+        }
+        return $record;
+    }
+
+    // The shape is documented on the fetchChildren prop of the admin TreeView component
+    private function getTreeNodeData(DataObject $node, DataObject $parent): array
+    {
+        /** @var DataObject&Hierarchy $node */
+        $hasChildren = $node->numChildren() > 0;
+        $limited = $this->isTreeNodeLimited($node);
+        return [
+            'id' => (int) $node->ID,
+            'parentId' => (int) $node->ParentID,
+            'treeTitle' => $this->getTreeTitleText($node),
+            'tooltip' => $this->getTreeNodeTooltip($node),
+            'recordClass' => $node->ClassName,
+            'classes' => $this->getTreeNodeClasses($node),
+            'iconClasses' => implode(' ', array_filter($this->getTreeIconClasses($node))),
+            'statusFlags' => $this->getTreeStatusFlags($node),
+            'hasChildren' => $hasChildren,
+            'limited' => $limited,
+            'listViewUrl' => $hasChildren ? $this->LinkListViewChildren($node->ID) : null,
+            'editUrl' => $this->LinkRecordEdit($node->ID),
+            'canEdit' => (bool) $node->canEdit(),
+            'canAddChildren' => (bool) $node->canAddChildren(),
+            // The same check as in duplicate() and duplicatewithchildren()
+            'canDuplicate' => (bool) $node->canCreate(null, ['Parent' => $parent]),
+        ];
+    }
+
+    /**
+     * Reads node_threshold_leaf from the node itself, where MarkedSet::isNodeLimited() reads it from the tree root
+     */
+    private function isTreeNodeLimited(DataObject $node): bool
+    {
+        /** @var DataObject&Hierarchy $node */
+        return $node->ID && $node->numChildren() > $node->config()->get('node_threshold_leaf');
+    }
+
+    private function prepopulateTreeData(array $ids): void
+    {
+        if (empty($ids)) {
+            return;
+        }
+        $modelClass = $this->getModelClass();
+        /** @var DataObject&Hierarchy $singleton */
+        $singleton = DataObject::singleton($modelClass);
+        $singleton->prepopulateTreeDataCache($ids, $this->getTreeAsULPrepopulateOptions($modelClass));
+        // A count limited to these IDs leaves each childless record to be counted with its own query
+        Hierarchy::prepopulate_numchildren_cache($singleton->getHierarchyBaseClass());
+        $this->prepopulateTreeEditPermissions($ids);
+    }
+
+    private function prepopulateTreeEditPermissions(array $ids): void
+    {
+        $modelClass = $this->getModelClass();
+        if (is_a($modelClass, PermissionCheckable::class, true)) {
+            $checker = DataObject::singleton($modelClass)->getPermissionChecker();
+            if ($checker instanceof InheritedPermissions) {
+                $checker->prePopulatePermissionCache(InheritedPermissions::EDIT, $ids);
+            }
+        }
+    }
+
+    /**
+     * Get the tree title as plain text, where getTreeTitle() may return escaped text or markup
+     */
+    private function getTreeTitleText(DataObject $node): string
+    {
+        /** @var DataObject&Hierarchy $node */
+        $title = Convert::xml2raw(strip_tags($node->getTreeTitle()));
+        $title = trim(str_replace(["\n", "\r"], '', $title));
+        if ($title === '') {
+            return _t(__CLASS__ . '.TREE_NO_TITLE', '(no title)');
+        }
+        return $title;
+    }
+
+    private function getTreeNodeTooltip(DataObject $node): string
+    {
+        return _t(
+            CMSMain::class . '.RECORD_TYPE_TITLE',
+            '(Record type: {type}) {title}',
+            [
+                'type' => $node->i18n_singular_name(),
+                'title' => $node->Title,
+            ]
+        );
+    }
+
+    private function getTreeIconClasses(DataObject $record): array
+    {
+        $iconClasses = [
+            'jstree-recordicon',
+            'record-icon',
+            $this->getRecordIconCssClass($record),
+            'class-' . Convert::raw2htmlid(get_class($record)),
+        ];
+        $record->invokeWithExtensions('updateTreeIconClasses', $iconClasses);
+        return $iconClasses;
+    }
+
+    private function getTreeStatusFlags(DataObject $node): array
+    {
+        $flags = [];
+        foreach ($node->getStatusFlags() as $key => $flag) {
+            if (is_string($flag)) {
+                $flag = ['text' => $flag];
+            }
+            $flags[] = [
+                'key' => (string) $key,
+                'text' => $flag['text'],
+                'title' => $flag['title'] ?? null,
+            ];
+        }
+        return $flags;
     }
 
     /**
@@ -1200,13 +1382,7 @@ class CMSMain extends LeftAndMain implements CurrentRecordIdentifier, Permission
         /** @var DataObject&Hierarchy $record */
         $children = $this->getCreatableSubClasses($record);
         $flags = $record->getStatusFlags();
-        $iconClasses = [
-            'jstree-recordicon',
-            'record-icon',
-            $this->getRecordIconCssClass($record),
-            'class-' . Convert::raw2htmlid(get_class($record)),
-        ];
-        $record->invokeWithExtensions('updateTreeIconClasses', $iconClasses);
+        $iconClasses = $this->getTreeIconClasses($record);
         $titleText = $record->getTreeTitle();
         // Hierarchy::getTreeTitle() will call Convert::raw2xml(), though this may have been
         // overridden by another method that doesn't call this
