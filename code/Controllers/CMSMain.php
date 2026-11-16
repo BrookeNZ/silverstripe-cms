@@ -1189,17 +1189,13 @@ class CMSMain extends LeftAndMain implements CurrentRecordIdentifier, Permission
     }
 
     /**
-     * Get the HTML markup to represent the record in a jstree structure.
+     * Get the CSS classes for the icon of a record in the site tree.
      *
-     * Returns three <span> html elements, an empty <span> with the class 'jstree-recordicon' in
-     * front, following by a <span> wrapping around its MenuTitle, then following by a <span> indicating its
-     * publication status.
+     * getRecordTreeMarkup() puts these classes on the icon in the legacy tree. The React tree consumes these classes
+     * through CMSMainTreeController, as the `iconClasses` value of each node.
      */
-    public function getRecordTreeMarkup(DataObject $record): string
+    public function getRecordTreeIconClasses(DataObject $record): array
     {
-        /** @var DataObject&Hierarchy $record */
-        $children = $this->getCreatableSubClasses($record);
-        $flags = $record->getStatusFlags();
         $iconClasses = [
             'jstree-recordicon',
             'record-icon',
@@ -1207,6 +1203,24 @@ class CMSMain extends LeftAndMain implements CurrentRecordIdentifier, Permission
             'class-' . Convert::raw2htmlid(get_class($record)),
         ];
         $record->invokeWithExtensions('updateTreeIconClasses', $iconClasses);
+        return $iconClasses;
+    }
+
+    /**
+     * Get the HTML markup to represent the record in a jstree structure.
+     *
+     * Returns three <span> html elements, an empty <span> with the class 'jstree-recordicon' in
+     * front, following by a <span> wrapping around its MenuTitle, then following by a <span> indicating its
+     * publication status.
+     *
+     * Outside the legacy tree, the Title column of ListViewForm() also uses this markup.
+     */
+    public function getRecordTreeMarkup(DataObject $record): string
+    {
+        /** @var DataObject&Hierarchy $record */
+        $children = $this->getCreatableSubClasses($record);
+        $flags = $record->getStatusFlags();
+        $iconClasses = $this->getRecordTreeIconClasses($record);
         $titleText = $record->getTreeTitle();
         // Hierarchy::getTreeTitle() will call Convert::raw2xml(), though this may have been
         // overridden by another method that doesn't call this
