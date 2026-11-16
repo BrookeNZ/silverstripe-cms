@@ -392,6 +392,40 @@ class CMSMainTest extends FunctionalTest
         );
     }
 
+    public static function provideTreeViewMountElement(): array
+    {
+        return [
+            'section with the tree view' => ['admin/pages'],
+            'deferred tree view' => ['admin/pages/treeview'],
+            'edit form side panel' => ['admin/pages/edit/show/%s'],
+        ];
+    }
+
+    #[DataProvider('provideTreeViewMountElement')]
+    public function testTreeViewMountElement(string $url): void
+    {
+        $page = $this->objFromFixture(SiteTree::class, 'page31');
+        $this->logInAs('admin');
+
+        $response = $this->get(sprintf($url, $page->ID));
+        $parser = new CSSContentParser($response->getBody());
+        $mounts = $parser->getBySelector('.cms-page-tree');
+
+        $this->assertCount(1, $mounts);
+        $attributes = [];
+        foreach ($mounts[0]->attributes() as $name => $value) {
+            $attributes[$name] = (string) $value;
+        }
+        $this->assertSame(SiteTree::class, $attributes['data-tree-id']);
+        $this->assertSame('admin/pages/tree/children', $attributes['data-url-children']);
+        $this->assertSame('admin/pages/tree/path', $attributes['data-url-path']);
+        $this->assertSame(SiteConfig::current_site_config()->Title, $attributes['data-root-title']);
+        $this->assertSame('Site Page Navigation', $attributes['data-label']);
+        // CSSContentParser::getBySelector() matches class names by substring.
+        // CSSContentParser::getBySelector('.cms-tree') would also find cms-tree-view-sidebar.
+        $this->assertEmpty($parser->getByXpath("//*[contains(concat(' ', @class, ' '), ' cms-tree ')]"));
+    }
+
     public function testBreadcrumbsHaveStatusFlags()
     {
         $page = new TestStatusFlagsPage();

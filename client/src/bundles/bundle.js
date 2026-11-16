@@ -8,6 +8,7 @@ require('../legacy/CMSMain.AddForm');
 require('../legacy/CMSMain.EditForm');
 require('../legacy/CMSMain');
 require('../legacy/CMSMain.Tree');
+require('entwine/TreeView/TreeViewEntwine');
 require('../legacy/RedirectorPage');
 require('../legacy/SiteTreeURLSegmentField');
 

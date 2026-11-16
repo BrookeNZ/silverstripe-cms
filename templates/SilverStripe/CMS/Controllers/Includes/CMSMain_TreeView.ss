@@ -8,35 +8,14 @@ $ExtraTreeTools
 		<a href="javascript:void(0)" class="clear-filter">
 			<%t SilverStripe\CMS\Controllers\CMSMain.TreeFilteredClear 'Clear' %>
 		</a>
-
-		<nav class="cms-tree <% if $TreeIsFiltered %>filtered-list<% end_if %>" aria-label="<%t SilverStripe\CMS\Controllers\CMSMain.SITE_PAGE_NAVIGATION 'Site Page Navigation' %>"
-			data-url-tree="$LinkWithSearch($Link('getsubtree')).ATT"
-			data-url-savetreenode="$Link('savetreenode').ATT"
-			data-url-updatetreenodes="$Link('updatetreenodes').ATT"
-			data-url-addpage="{$Link('AddForm/?action_doAdd=1&ParentID=%s&RecordType=%s&ParentModeField=child').ATT}"
-			data-url-editpage="$LinkRecordEdit('%s').ATT"
-			data-url-duplicate="{$Link('duplicate/%s').ATT}"
-			data-url-duplicatewithchildren="{$Link('duplicatewithchildren/%s').ATT}"
-			data-url-listview="{$Link('?view=list').ATT}"
-			data-hints="$TreeHints.ATT"
-			data-childfilter="$Link('childfilter').ATT"
-			data-extra-params="SecurityID=$SecurityID.ATT">
-			$TreeAsUL
-        </nav>
     </div>
 <% else %>
-    <nav class="cms-tree flexbox-area-grow <% if $TreeIsFiltered %>filtered-list<% end_if %>" aria-label="<%t SilverStripe\CMS\Controllers\CMSMain.SITE_PAGE_NAVIGATION 'Site Page Navigation' %>"
-		data-url-tree="$LinkWithSearch($Link('getsubtree')).ATT"
-		data-url-savetreenode="$Link('savetreenode').ATT"
-		data-url-updatetreenodes="$Link('updatetreenodes').ATT"
-		data-url-addpage="{$Link('AddForm/?action_doAdd=1&ParentID=%s&RecordType=%s&ParentModeField=child').ATT}"
-		data-url-editpage="$LinkRecordEdit('%s').ATT"
-		data-url-duplicate="{$Link('duplicate/%s').ATT}"
-		data-url-duplicatewithchildren="{$Link('duplicatewithchildren/%s').ATT}"
-		data-url-listview="{$Link('?view=list').ATT}"
-		data-hints="$TreeHints.ATT"
-		data-childfilter="$Link('childfilter').ATT"
-		data-extra-params="SecurityID=$SecurityID.ATT">
-		$TreeAsUL
-	</nav>
+    <%-- client/src/entwine/TreeView/TreeViewEntwine.js mounts TreeView on this element. client/src/entwine/TreeView/treeViewRequests.js reads the data attributes. --%>
+    <div class="cms-page-tree flexbox-area-grow fill-height"
+        data-tree-id="$ModelClass.ATT"
+        data-url-children="$LinkTree('children').ATT"
+        data-url-path="$LinkTree('path').ATT"
+        data-root-title="$CMSTreeTitle.ATT"
+        data-label="<%t SilverStripe\CMS\Controllers\CMSMain.SITE_PAGE_NAVIGATION 'Site Page Navigation' %>"
+    ></div>
 <% end_if %>

@@ -2142,6 +2142,16 @@ class CMSMain extends LeftAndMain implements CurrentRecordIdentifier, Permission
     }
 
     /**
+     * Get the URL of an endpoint of the page tree, which CMSMainTreeController serves.
+     *
+     * CMSMain_TreeView.ss reads the URLs of the tree from this method.
+     */
+    public function LinkTree(?string $action = null): string
+    {
+        return CMSMainTreeController::singleton()->Link($action);
+    }
+
+    /**
      * Returns a LiteralField containing parameter field HTML
      * for batch actions
      *
